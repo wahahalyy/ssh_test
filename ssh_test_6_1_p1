@@ -1,0 +1,136 @@
+# 导入所需的模块
+import configparser
+import paramiko
+import time
+import winsound
+import tkinter as tk
+from tkinter import ttk, messagebox
+import os
+import sys
+import logging
+
+# 读取配置文件中的信息
+config = configparser.ConfigParser()
+config.read('config.ini')
+ips = config['SSH']['ip'].split(',')
+port = int(config['SSH']['port'])
+username = config['SSH']['username']
+password = config['SSH']['password']
+alarm = config['SOUND']['alarm']
+alarm1 = config['SOUND']['alarm1']
+alarm2 = config['SOUND']['alarm2']
+recovery = config['SOUND']['recovery']
+
+# 创建一个SSH客户端对象
+client = paramiko.SSHClient()
+# 设置自动接受服务器的密钥
+client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+# 创建一个窗口对象
+window = tk.Tk()
+# 设置窗口的大小和位置
+window.geometry('475x300')
+# 设置窗口的初始标题
+window.title('SSH连接检测 '+'Server:  '+ips[0]+':'+str(port)+' and '+ips[1]+':'+str(port))
+# 创建一个标签，显示当前连接的服务器信息
+label_status = ttk.Label(window, text='状态：未知', font=('Arial', 16))
+label_status.pack(pady=20)
+# 创建一个列表框对象，用于显示日志内容
+list_log = tk.Listbox(window, font=('Helvetica', 12))
+list_log.pack(fill=tk.BOTH, expand=True)
+
+# 定义一个标志变量，用于判断是否需要播放恢复音频
+first_time = [True, True]
+
+# 创建一个名为ssh_logger的日志器对象
+ssh_logger = logging.getLogger('ssh_logger')
+# 创建一个名为log_dir的变量，用于存储日志文件的目录路径
+log_dir = 'log'
+# 如果该目录不存在，就创建它
+if not os.path.exists(log_dir):
+    os.mkdir(log_dir)
+# 创建一个名为log_file的变量，用于存储日志文件的文件名
+log_file = time.strftime('%Y-%m-%d', time.localtime()) + '.log'
+# 创建一个名为file_handler的文件处理器对象，用于将日志信息写入到日志文件中
+file_handler = logging.FileHandler(os.path.join(log_dir, log_file), 'a')
+# 创建一个名为formatter的格式器对象，用于指定日志信息的输出格式
+formatter = logging.Formatter('%(levelname)s - %(asctime)s - %(message)s')
+# 将格式器对象设置为文件处理器对象的格式器属性
+file_handler.setFormatter(formatter)
+# 将文件处理器对象添加到日志器对象的处理器列表中
+ssh_logger.addHandler(file_handler)
+
+# 定义一个函数，用于检测SSH连接状态
+def check_ssh():
+    global client
+    global ips
+    global port
+    global username
+    global password
+    global alarm
+    global alarm1
+    global alarm2
+    global recovery
+    global first_time
+    global window
+    global label_status
+    global list_log
+    global ssh_logger
+    status = [False, False]
+    for i in range(2):
+        try:
+            # 尝试连接服务器
+            client.connect(ips[i], port, username, password, timeout=2)
+            # 如果连接成功，更新状态为正常
+            status[i] = True
+            # 添加一条日志到列表框
+            list_log.insert(tk.END, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()) + ' 连接成功 to '+ips[i])
+            # 滚动到最后一条日志
+            list_log.yview(tk.END)
+            # 如果之前的状态是异常，播放连接恢复的音频
+            if not first_time[i]:
+                winsound.PlaySound(recovery, winsound.SND_FILENAME)
+            # 设置标志变量为True，表示不需要再次播放恢复音频
+            first_time[i] = True
+        except:
+            # 如果连接失败，更新状态为异常
+            status[i] = False
+            # 添加一条日志到列表框
+            list_log.insert(tk.END, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()) + ' 连接异常 to '+ips[i])
+            # 滚动到最后一条日志
+            list_log.yview(tk.END)
+            # 设置标志变量为False，表示需要播放恢复音频
+            first_time[i] = False
+            # 调用日志器对象的error方法，将连接异常的消息记录到日志文件中
+            ssh_logger.error('Connection failed to {}:{}'.format(ips[i], port))
+        finally:
+            # 关闭客户端对象
+            client.close()
+    if all(status):
+        label_status.config(text='状态：正常', foreground='green')
+        winsound.PlaySound(None, winsound.SND_PURGE)
+    elif status[0]:
+        label_status.config(text='状态：22网段中断', foreground='orange')
+        winsound.PlaySound(alarm2, winsound.SND_LOOP | winsound.SND_ASYNC)
+    elif status[1]:
+        label_status.config(text='状态：11网段中断', foreground='orange')
+        winsound.PlaySound(alarm1, winsound.SND_LOOP | winsound.SND_ASYNC)
+    else:
+        label_status.config(text='状态：全部中断', foreground='red')
+        winsound.PlaySound(alarm, winsound.SND_LOOP | winsound.SND_ASYNC)
+        time.sleep(0.85)
+    # 2秒后再次调用该函数
+    window.after(2000, check_ssh)
+
+# 定义一个函数，用于在指定的时间间隔后重启程序
+def restart_program():
+    python = sys.executable
+    os.execl(python, python, * sys.argv)
+
+# 在2小时后调用重启程序的函数
+window.after(72000000, restart_program)
+
+# 调用检测SSH连接状态的函数
+check_ssh()
+# 进入窗口的主循环
+window.mainloop()
